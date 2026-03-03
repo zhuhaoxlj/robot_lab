@@ -22,6 +22,7 @@ import cli_args  # isort: skip
 parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
 parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
 parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
+parser.add_argument("--video_duration", type=float, default=None, help="Duration of the recorded video (in seconds). Overrides --video_length if specified.")
 parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
@@ -161,12 +162,20 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if isinstance(env.unwrapped, DirectMARLEnv):
         env = multi_agent_to_single_agent(env)
 
+    # calculate video length in steps if duration is specified
+    if args_cli.video and args_cli.video_duration is not None:
+        dt = env.unwrapped.step_dt
+        video_length_steps = int(args_cli.video_duration / dt)
+        print(f"[INFO] Recording video for {args_cli.video_duration} seconds ({video_length_steps} steps at {dt} s/step)")
+    else:
+        video_length_steps = args_cli.video_length
+
     # wrap for video recording
     if args_cli.video:
         video_kwargs = {
             "video_folder": os.path.join(log_dir, "videos", "play"),
             "step_trigger": lambda step: step == 0,
-            "video_length": args_cli.video_length,
+            "video_length": video_length_steps,
             "disable_logger": True,
         }
         print("[INFO] Recording videos during training.")
@@ -216,6 +225,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # reset environment
     obs = env.get_observations()
     timestep = 0
+    global_step_count = 0  # 全局步骤计数器，用于调试
     # simulate environment
     while simulation_app.is_running():
         start_time = time.time()
@@ -224,16 +234,64 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             # agent stepping
             actions = policy(obs)
             # env stepping
-            obs, _, dones, _ = env.step(actions)
+            obs, rewards, dones, infos = env.step(actions)
+            global_step_count += 1
+
+            # debug: monitor robot status every 50 steps
+            if global_step_count % 50 == 0:
+                base_env = env.unwrapped
+                robot = base_env.scene["robot"]
+                projected_gravity = robot.data.projected_gravity_b[0, 2].item()
+                base_height = robot.data.root_pos_w[0, 2].item()
+                print(f"[DEBUG] Step {global_step_count}: height={base_height:.3f}m (min: 0.4m), "
+                      f"projected_gravity_z={projected_gravity:.3f} (threshold: -0.5)")
+
+            # debug: print dones status
+            if dones.any():
+                base_env = env.unwrapped
+                robot = base_env.scene["robot"]
+                projected_gravity = robot.data.projected_gravity_b[0, 2].item()
+                base_height = robot.data.root_pos_w[0, 2].item()
+                print(f"[DEBUG] Episode done at step {global_step_count}, dones: {dones}, reset_indices: {dones.nonzero(as_tuple=False).squeeze(-1)}")
+                print(f"[DEBUG] Final state: height={base_height:.3f}m, projected_gravity_z={projected_gravity:.3f}")
             # reset recurrent states for episodes that have terminated
             policy_nn.reset(dones)
+            # auto-reset environments where episodes terminated
+            if dones.any():
+                try:
+                    # access the unwrapped environment to reset specific indices
+                    base_env = env.unwrapped
+                    # get indices of terminated environments
+                    reset_indices = dones.nonzero(as_tuple=False).squeeze(-1)
+                    # ensure reset_indices is at least 1D for single-environment case
+                    if reset_indices.ndim == 0:
+                        reset_indices = reset_indices.unsqueeze(0)
+                    print(f"[DEBUG] Resetting environments at indices: {reset_indices}")
+                    # reset the terminated environments and get new observations
+                    reset_obs = base_env.reset(env_ids=reset_indices)
+                    # update observations for reset environments
+                    obs[reset_indices] = reset_obs[reset_indices]
+                    print(f"[DEBUG] Reset completed successfully")
+                except Exception as e:
+                    print(f"[ERROR] Failed to reset environment: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # 在重置失败时，尝试全局重置
+                    print("[INFO] Attempting global reset as fallback...")
+                    try:
+                        obs = base_env.reset()
+                        print("[INFO] Global reset succeeded")
+                    except Exception as e2:
+                        print(f"[ERROR] Global reset also failed: {e2}")
+                        break
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video
-            if timestep == args_cli.video_length:
+            if timestep == video_length_steps:
+                print(f"[INFO] Video recording complete ({timestep} steps recorded)")
                 break
 
-        if args_cli.keyboard:
+        if args_cli.keyboard or args_cli.video:
             camera_follow(env)
 
         # time delay for real-time evaluation
