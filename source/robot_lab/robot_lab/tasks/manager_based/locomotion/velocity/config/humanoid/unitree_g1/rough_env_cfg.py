@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from isaaclab.utils import configclass
+from isaaclab.managers import SceneEntityCfg, TerminationTermCfg as DoneTerm
 
 import robot_lab.tasks.manager_based.locomotion.velocity.mdp as mdp
 from robot_lab.tasks.manager_based.locomotion.velocity.velocity_env_cfg import LocomotionVelocityRoughEnvCfg
@@ -154,6 +155,23 @@ class UnitreeG1RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
 
         # ------------------------------Terminations------------------------------
         self.terminations.illegal_contact.params["sensor_cfg"].body_names = [self.base_link_name]
+        # 降低 illegal_contact 阈值，使倒地更容易被检测到
+        self.terminations.illegal_contact.params["threshold"] = 0.5
+
+        # 添加基于方向的倒地检测：当机器人倾斜角度过大时终止
+        # projected_gravity_b[:, 2] > -0.5 意味着机器人倾斜超过约30度
+        self.terminations.is_fallen = DoneTerm(
+            func=mdp.is_fallen,
+            params={"asset_cfg": SceneEntityCfg("robot"), "threshold": -0.5},
+        )
+
+        # 添加基于高度的倒地检测：当机器人基座高度过低时终止
+        # Unitree G1 直立时高度约 1.0-1.2m，倒地时约 0.3-0.5m
+        # 设置阈值为 0.4m，作为倾斜检测的补充
+        self.terminations.is_too_low = DoneTerm(
+            func=mdp.is_too_low,
+            params={"asset_cfg": SceneEntityCfg("robot"), "min_height": 0.4},
+        )
 
         # ------------------------------Curriculums------------------------------
         # self.curriculum.command_levels_lin_vel.params["range_multiplier"] = (0.2, 1.0)
