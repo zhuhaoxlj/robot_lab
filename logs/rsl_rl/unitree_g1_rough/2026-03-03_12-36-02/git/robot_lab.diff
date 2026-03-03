@@ -1,0 +1,20 @@
+--- git status ---
+On branch main
+Your branch is up to date with 'origin/main'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   logs/rsl_rl/unitree_g1_rough/2026-03-03_09-08-24/exported/policy.pt
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	logs/rsl_rl/unitree_g1_rough/2026-03-03_12-36-02/
+
+no changes added to commit (use "git add" and/or "git commit -a") 
+
+
+--- git diff ---
+diff --git a/logs/rsl_rl/unitree_g1_rough/2026-03-03_09-08-24/exported/policy.pt b/logs/rsl_rl/unitree_g1_rough/2026-03-03_09-08-24/exported/policy.pt
+index 6a5db2c..8ae0b3a 100644
+Binary files a/logs/rsl_rl/unitree_g1_rough/2026-03-03_09-08-24/exported/policy.pt and b/logs/rsl_rl/unitree_g1_rough/2026-03-03_09-08-24/exported/policy.pt differ
